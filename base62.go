@@ -11,7 +11,6 @@ const (
 	encodeStd = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
 
-
 var baseInt = 62
 var base = big.NewInt(int64(baseInt))
 var StdEncoding = NewEncoding(encodeStd)
@@ -102,15 +101,13 @@ func (enc *Encoding) doEncode(num *big.Int, shift int) *strings.Builder {
 		builder.WriteByte(enc.encode[shift])
 	}
 
-	for ; num.Int64() != 0; {
+	for num.Int64() != 0 {
 		mod := enc.encode[new(big.Int).Mod(num, base).Int64()]
 		num = num.Div(num, base)
 		builder.WriteByte(mod)
 	}
 
-	if !enc.forward {
-		return builder
-	} else {
+	if enc.forward {
 		rtn := new(strings.Builder)
 		bs := builder.String()
 		l := len(bs)
@@ -122,6 +119,8 @@ func (enc *Encoding) doEncode(num *big.Int, shift int) *strings.Builder {
 		rtn.Write(rd)
 		return rtn
 	}
+
+	return builder
 }
 
 func (enc *Encoding) DecodeString(s string) []byte {
@@ -130,13 +129,13 @@ func (enc *Encoding) DecodeString(s string) []byte {
 	}
 
 	if enc.forward {
+		bs := []byte(s)
 		l := len(s)
-		d := ""
-		for i := 0; i < l; i++ {
-			d += string(s[l-i-1])
+		for i := 0; i < l/2; i++ {
+			bs[i], bs[l-i-1] = bs[l-i-1], bs[i]
 		}
 
-		s = d
+		s = string(bs)
 	}
 
 	shift := 0

@@ -27,6 +27,16 @@ func TestBase62(t *testing.T) {
 	wg.Wait()
 }
 
+func BenchmarkBase62(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		d := []byte(random(i))
+		StdEncoding.DecodeString(StdEncoding.EncodeToString(d))
+		FlipEncoding.DecodeString(FlipEncoding.EncodeToString(d))
+		ShiftEncoding.DecodeString(ShiftEncoding.EncodeToString(d))
+		FlipShiftEncoding.DecodeString(FlipShiftEncoding.EncodeToString(d))
+	}
+}
+
 func random(l int) string {
 	rand.Seed(time.Now().UnixNano())
 	chars := []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖ" +
