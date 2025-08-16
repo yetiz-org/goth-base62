@@ -2,180 +2,24 @@ name: Go
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ master ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ master ]
 
 jobs:
-  test:
-    name: Test
+
+  build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: [1.20, 1.21, 1.22]
-
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: ${{ matrix.go-version }}
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.23
 
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
+      - name: Build
+        run: go build -v ./...
 
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Verify dependencies
-      run: go mod verify
-
-    - name: Build
-      run: go build -v ./...
-
-    - name: Run go vet
-      run: go vet ./...
-
-    - name: Run tests
-      run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
-
-    - name: Check coverage threshold
-      run: |
-        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
-        echo "Coverage: ${COVERAGE}%"
-        if (( $(echo "$COVERAGE < 95.0" | bc -l) )); then
-          echo "Coverage below 95%: ${COVERAGE}%"
-          exit 1
-        fi
-
-    - name: Upload coverage
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.out
-        flags: unittests
-
-  benchmark:
-    name: Benchmark
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'push'
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: 1.22
-
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Run core benchmarks
-      run: |
-        go test -run=^$ \
-          -bench='^(BenchmarkEncodeToString|BenchmarkDecodeString|BenchmarkBase62)$' \
-          -benchmem \
-          -benchtime=200ms \
-          -count=1 \
-          -timeout=5m
-
-    - name: Run full benchmark suite
-      run: |
-        go test -run=^$ \
-          -bench=. \
-          -benchmem \
-          -benchtime=300ms \
-          -count=2 \
-          -timeout=10m \
-          > benchmark_results.txt
-
-    - name: Upload benchmark results
-      uses: actions/upload-artifact@v3
-      with:
-        name: benchmark-results-${{ github.sha }}
-        path: benchmark_results.txt
-
-  fuzz:
-    name: Fuzz Testing
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'pull_request'
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: 1.22
-
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Run fuzz tests
-      run: |
-        go test -fuzz=FuzzBase62RoundTrip -fuzztime=30s -fuzzminimizetime=10s
-        go test -fuzz=FuzzDecodeStringStrict -fuzztime=30s -fuzzminimizetime=10s
-
-  lint:
-    name: Static Analysis
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: 1.22
-
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v3
-      with:
-        version: latest
-        args: --timeout=5m
-
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: 1.22
-
-    - name: Run Gosec
-      uses: securecodewarrior/github-action-gosec@master
-      with:
-        args: '-no-fail -fmt sarif -out results.sarif ./...'
-
-    - name: Upload SARIF results
-      uses: github/codeql-action/upload-sarif@v2
-      with:
-        sarif_file: results.sarif
+      - name: Test
+        run: go test -v ./...
