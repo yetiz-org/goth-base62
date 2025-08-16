@@ -639,7 +639,7 @@ func TestDecodeStringStrictAPI(t *testing.T) {
 
 	// Non-ASCII characters (original implementation will panic)
 	nonASCIITests := []string{
-		"TestChinese",  // Non-ASCII
+		"測試中文",       // Real Chinese characters (non-ASCII)
 		"\u00FF\u00FE", // High ASCII
 	}
 
