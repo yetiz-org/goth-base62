@@ -1,16 +1,21 @@
 // Package base62 provides efficient Base62 encoding with multiple encoding variants.
 //
 // Base62 encoding uses 62 characters (0-9, A-Z, a-z) for URL-safe, readable output.
-// Four encoding variants are supported:
-//   - StdEncoding: Standard encoding
-//   - FlipEncoding: Reversed character order
+// Six encoding variants are supported:
+//   - StdEncoding: Standard encoding with length preservation (default)
+//   - FlipEncoding: Reversed character order with length preservation (default)
 //   - ShiftEncoding: Random shift for additional entropy
 //   - FlipShiftEncoding: Combined reverse and shift
+//   - StdLengthEncoding: Alias for StdEncoding (deprecated, use StdEncoding)
+//   - FlipLengthEncoding: Alias for FlipEncoding (deprecated, use FlipEncoding)
 //
 // Important behaviors:
-//   - StdEncoding and FlipEncoding may lose leading zeros due to big.Int.Bytes()
-//   - ShiftEncoding and FlipShiftEncoding preserve original length
+//   - StdEncoding and FlipEncoding preserve original length including leading zeros
+//   - ShiftEncoding and FlipShiftEncoding preserve original length with random encoding
 //   - All encoders are goroutine-safe
+//
+// For AES encryption/decryption or any use case requiring exact byte length preservation,
+// use StdEncoding or FlipEncoding (both preserve length by default).
 package base62
 
 import (
@@ -22,8 +27,7 @@ import (
 )
 
 const (
-	encodeStd = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	// Base62Size is the size of the Base62 character set
+	encodeStd  = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	Base62Size = 62
 )
 
@@ -31,11 +35,11 @@ var (
 	baseInt = Base62Size
 	base    = big.NewInt(int64(baseInt))
 
-	// StdEncoding is the standard Base62 encoder
-	StdEncoding = NewEncoding(encodeStd)
+	// StdEncoding is the standard Base62 encoder with length preservation
+	StdEncoding = NewEncoding(encodeStd).WithLength(true)
 
-	// FlipEncoding reverses character order
-	FlipEncoding = NewEncoding(encodeStd).Direction(true)
+	// FlipEncoding reverses character order with length preservation
+	FlipEncoding = NewEncoding(encodeStd).Direction(true).WithLength(true)
 
 	// ShiftEncoding adds random shift for entropy
 	ShiftEncoding = NewEncoding(encodeStd).Shift(true)
@@ -43,7 +47,9 @@ var (
 	// FlipShiftEncoding combines reverse and shift
 	FlipShiftEncoding = NewEncoding(encodeStd).Shift(true).Direction(true)
 
-	// bigIntPool reuses big.Int to reduce allocations
+	StdLengthEncoding  = NewEncoding(encodeStd).WithLength(true)
+	FlipLengthEncoding = NewEncoding(encodeStd).Direction(true).WithLength(true)
+
 	bigIntPool = sync.Pool{
 		New: func() interface{} {
 			return &big.Int{}
@@ -51,27 +57,23 @@ var (
 	}
 )
 
-// Encoding represents a Base62 encoder instance
 type Encoding struct {
-	encode    [Base62Size]byte // encoding character table
-	decodeMap [256]byte        // decoding lookup table
-	forward   bool             // reverse encoding direction
-	shift     bool             // use shift encoding
+	encode     [Base62Size]byte
+	decodeMap  [256]byte
+	forward    bool
+	shift      bool
+	withLength bool
 }
 
 // ErrInvalidCharacter indicates an invalid character during decoding
 var ErrInvalidCharacter = errors.New("base62: invalid character")
 
-// NewEncoding creates a new Base62 encoder.
-//
-// The encoder string must be 62 characters long with unique characters.
-// Newline characters (\n or \r) are not allowed.
+// NewEncoding creates a new Base62 encoder with the given alphabet.
 func NewEncoding(encoder string) *Encoding {
 	if len(encoder) != Base62Size {
 		panic("encoding alphabet is not 62-bytes long")
 	}
 
-	// Validate character uniqueness
 	seen := make(map[byte]bool, Base62Size)
 	for i := 0; i < len(encoder); i++ {
 		if encoder[i] == '\n' || encoder[i] == '\r' {
@@ -96,15 +98,21 @@ func NewEncoding(encoder string) *Encoding {
 	return e
 }
 
-// Direction sets encoding direction. When forward is true, output is reversed.
+// Direction sets encoding direction.
 func (enc *Encoding) Direction(forward bool) *Encoding {
 	enc.forward = forward
 	return enc
 }
 
-// Shift enables shift encoding for additional randomness at the cost of length.
+// Shift enables shift encoding.
 func (enc *Encoding) Shift(shift bool) *Encoding {
 	enc.shift = shift
+	return enc
+}
+
+// WithLength enables length preservation.
+func (enc *Encoding) WithLength(withLength bool) *Encoding {
+	enc.withLength = withLength
 	return enc
 }
 
@@ -115,7 +123,6 @@ func (enc *Encoding) EncodeToString(src []byte) string {
 	}
 
 	sl := len(src)
-	// Get big.Int from pool to reduce allocations
 	num := bigIntPool.Get().(*big.Int)
 	defer bigIntPool.Put(num)
 	num.SetInt64(0)
@@ -134,7 +141,6 @@ func (enc *Encoding) EncodeToString(src []byte) string {
 	}()
 
 	if enc.shift {
-		// Pre-allocate capacity
 		shifted := make([]byte, sl+1)
 		shifted[0] = 0xFF
 		sb := byte(shift)
@@ -143,6 +149,11 @@ func (enc *Encoding) EncodeToString(src []byte) string {
 		}
 
 		num.SetBytes(shifted)
+	} else if enc.withLength {
+		prefixed := make([]byte, sl+1)
+		prefixed[0] = 0xFF
+		copy(prefixed[1:], src)
+		num.SetBytes(prefixed)
 	} else {
 		num.SetBytes(src)
 	}
@@ -151,7 +162,6 @@ func (enc *Encoding) EncodeToString(src []byte) string {
 }
 
 func (enc *Encoding) doEncode(num *big.Int, shift int) *strings.Builder {
-	// Estimate capacity: ~1.37 Base62 chars per byte
 	estimatedLen := (len(num.Bytes()) * 11 / 8) + 2
 	if shift >= 0 {
 		estimatedLen++
@@ -163,7 +173,6 @@ func (enc *Encoding) doEncode(num *big.Int, shift int) *strings.Builder {
 		builder.WriteByte(enc.encode[shift])
 	}
 
-	// Reuse big.Int to reduce allocations
 	mod := bigIntPool.Get().(*big.Int)
 	defer bigIntPool.Put(mod)
 
@@ -178,7 +187,6 @@ func (enc *Encoding) doEncode(num *big.Int, shift int) *strings.Builder {
 		bs := builder.String()
 		l := len(bs)
 		rtn.Grow(l)
-		// Write reversed chars directly
 		for i := l - 1; i >= 0; i-- {
 			rtn.WriteByte(bs[i])
 		}
@@ -189,7 +197,6 @@ func (enc *Encoding) doEncode(num *big.Int, shift int) *strings.Builder {
 }
 
 // DecodeString decodes Base62 string to bytes.
-// Note: Panics on invalid characters for backward compatibility.
 func (enc *Encoding) DecodeString(s string) []byte {
 	result, err := enc.decodeStringInternal(s, false)
 	if err != nil {
@@ -198,7 +205,7 @@ func (enc *Encoding) DecodeString(s string) []byte {
 	return result
 }
 
-// DecodeStringStrict decodes Base62 string to bytes, returning error for invalid characters
+// DecodeStringStrict decodes Base62 string to bytes with strict validation.
 func (enc *Encoding) DecodeStringStrict(s string) ([]byte, error) {
 	return enc.decodeStringInternal(s, true)
 }
@@ -208,26 +215,20 @@ func (enc *Encoding) decodeStringInternal(s string, strict bool) ([]byte, error)
 		return []byte{}, nil
 	}
 
-	// Check for invalid characters
 	for i := 0; i < len(s); i++ {
 		if s[i] >= 128 {
-			// Non-ASCII character causes array bounds panic
 			if strict {
 				return nil, ErrInvalidCharacter
 			} else {
-				// Maintain original behavior: non-ASCII panics
 				panic("runtime error: index out of range")
 			}
 		}
 		if strict && enc.decodeMap[s[i]] == 0xFF {
-			// Strict mode: invalid ASCII characters return error
 			return nil, ErrInvalidCharacter
 		}
-		// Note: non-strict mode treats invalid ASCII as 0xFF
 	}
 
 	if enc.forward {
-		// Reverse in-place to reduce allocations
 		bs := make([]byte, len(s))
 		for i := 0; i < len(s); i++ {
 			bs[i] = s[len(s)-1-i]
@@ -244,7 +245,6 @@ func (enc *Encoding) decodeStringInternal(s string, strict bool) ([]byte, error)
 		s = s[1:]
 	}
 
-	// Get big.Int from pool
 	num := bigIntPool.Get().(*big.Int)
 	defer bigIntPool.Put(num)
 	num.SetInt64(0)
@@ -275,6 +275,13 @@ func (enc *Encoding) decodeStringInternal(s string, strict bool) ([]byte, error)
 			shifted[(i+shift)%(sl-1)] = bs[i] ^ sb
 		}
 		return shifted, nil
+	}
+
+	if enc.withLength {
+		if sl > 0 && bs[0] == 0xFF {
+			return bs[1:], nil
+		}
+		return bs, nil
 	}
 
 	return bs, nil
